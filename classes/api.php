@@ -181,7 +181,7 @@ class api {
      * @throws \dml_exception
      * @throws moodle_exception
      */
-    public static function run_scheduled_jobs($area, $type, $time = null, $limit = 1000, progress_trace $trace = null) {
+    public static function run_scheduled_jobs($area, $type, $time = null, $limit = 50, progress_trace $trace = null) {
         global $DB;
         if (!static::api_callable($trace)) {
             return false;
@@ -203,7 +203,8 @@ class api {
             'type' => $type,
             'disabled' => 1,
             'timerequestnow' => $time,
-            'timenorequest' => $time
+            'timenorequest' => $time,
+            'lastenrolmentjob' => 0
         ];
         $timingdelaysql = "AND (timelastrequest + timenextrequestdelay) < :timerequestnow";
         $sql = "SELECT *
@@ -212,10 +213,25 @@ class api {
                    AND type = :type
                    AND disabled <> 1
                    $timingdelaysql
-                   AND ((:timenorequest < (timenorequestsafter + timerequestsafterextension)) OR timelastrequest = 0)";
+                   AND ((:timenorequest < (timenorequestsafter + timerequestsafterextension)) OR timelastrequest = 0)
+                   AND id > :lastenrolmentjob
+                   ORDER BY id ASC";
+        $lastenrolmentjob = get_config('enrol_arlo', 'lastenrolmentjob');
+        if ($lastenrolmentjob) {
+            $conditions['lastenrolmentjob'] = $lastenrolmentjob;
+        }
         $rs = $DB->get_recordset_sql($sql, $conditions, 0, $limit);
+        if (!$rs->valid()) {
+            // No jobs found, if limitfrom is greater than 0, reset config value and check again from the beginning.
+            if ($lastenrolmentjob > 0) {
+                set_config('lastenrolmentjob', 0, 'enrol_arlo');
+                $conditions['lastenrolmentjob'] = 0;
+                $rs = $DB->get_recordset_sql($sql, $conditions, 0, $limit);
+            }
+        }
         if ($rs->valid()) {
             foreach ($rs as $record) {
+                $currentid = $record->id;
                 try {
                     $jobpersistent = new job_persistent(0, $record);
                     $scheduledjob = job_factory::create_from_persistent($jobpersistent);
@@ -245,10 +261,12 @@ class api {
                     if ($exception->getMessage() == 'error/locktimeout') {
                         $trace->output('Operation is currently locked by another process.');
                     } else {
+                        set_config('lastenrolmentjob', $currentid, 'enrol_arlo');
                         throw $exception;
                     }
                 }
             }
+            set_config('lastenrolmentjob', $currentid, 'enrol_arlo');
         }
         $rs->close();
     }
@@ -394,6 +412,59 @@ class api {
             $course = get_course($record->courseid);
             enrol_arlo_associate_all($course, $record->sourcetemplateguid);
         }
+    }
+
+    /**
+     * Runs the membership and outcome jobs for an enrolment instance
+     *
+     * @param $instanceid
+     * @param $full
+     * @param $trace
+     * @return bool
+     * @throws \coding_exception
+     * @throws \dml_exception
+     */
+    public static function run_instance_jobs($instanceid, $full = false, $trace = null) {
+        global $DB;
+
+        $membershipsjobpersistent = \enrol_arlo\local\persistent\job_persistent::get_record(
+            [
+                'area' => 'enrolment',
+                'type' => 'memberships',
+                'instanceid' => $instanceid
+            ]
+        );
+
+        if (!empty($membershipsjobpersistent)) {
+            if ($full) {
+                $membershipsjobpersistent->set('lastsourceid', 0);
+                $membershipsjobpersistent->set('lastsourcetimemodified', '1970-01-01T00:00:00Z');
+                $membershipsjobpersistent->set('timelastrequest', 0);
+                $membershipsjobpersistent->save();
+                $DB->set_field('enrol_arlo_registration', 'updatesource', 1, ['enrolid' => $instanceid]);
+            }
+            $membershipsjob = \enrol_arlo\local\factory\job_factory::create_from_persistent($membershipsjobpersistent);
+            $membershipstatus = $membershipsjob->run();
+        } else {
+            if (!empty($trace)) {
+                $trace->output(get_string('nomembershipjobfound', 'enrol_arlo'));
+            } else {
+                throw new moodle_exception('nomembershipjobfound','enrol_arlo', '', $instanceid);
+            }
+        }
+
+        
+        if (!empty($outcomesjobpersistent)) {
+            $outcomesjob = \enrol_arlo\local\factory\job_factory::create_from_persistent($outcomesjobpersistent);
+            $outcomestatus = $outcomesjob->run();
+        } else {
+            if (!empty($trace)) {
+                $trace->output(get_string('nooutcomejobfound', 'enrol_arlo'));
+            } else {
+                throw new moodle_exception('nooutcomejobfound','enrol_arlo', '', $instanceid);
+            }         
+        }
+        return !empty($membershipstatus) && !empty($outcomestatus);
     }
 
 }

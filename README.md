@@ -34,6 +34,30 @@ Then click the Uninstall link opposite the Arlo plugin.
 4. Use a file manager to remove/delete the actual plugin directory as instructed, otherwise Moodle will reinstall it next 
 time you access the site administration.
 
+## Release Notes
+
+### Version 4.1.1 (2023062000)
+* Fix enrollments task processing (ARLO-20)
+* Improvement completion task processing (ARLO-10)
+
+### Version 4.1 (2023021500)
+
+### Version 3.11.3 (2023012000)
+* Sync efficiency improvements using api registration based calls instead of event based api calls (ARLO-7)
+
+### Version 3.11.2 (2022101000)
+* Sort scheduled jobs to improve behavior on PostgreSQL systems. (ARLO-6)
+
+### Version 3.11.1 (2022090100)
+* Add additional information to logs on PATCH failure. (ARLO-5)
+
+### Version 3.11.0 (2022083100)
+* Moodle 3.11 compatibility. (ARLO-1)
+* Improvements for sites with very large numbers of enrollment methods. (DEF-110)
+
+### Version 3.9.2 (2020073112)
+* Bugfig issue #154. Incorrect scope error prevented enrolment task from completing in some instances resulting in enrolments 
+  not being added.
 
 ## Support
 
